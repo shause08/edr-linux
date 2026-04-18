@@ -1,0 +1,24 @@
+[package]
+name = "edr-ebpf"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "edr-ebpf"
+path = "src/main.rs"
+
+[dependencies]
+aya-bpf = { version = "0.1", features = ["async"] }
+aya-log-ebpf = "0.1"
+edr-common = { path = "../edr-common" }
+
+[profile.dev]
+opt-level = 3
+debug = false
+panic = "abort"
+
+[profile.release]
+opt-level = 3
+debug = false
+panic = "abort"
+lto = true

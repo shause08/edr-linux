@@ -1,0 +1,60 @@
+[package]
+name = "edr-agent"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "edr"
+path = "src/main.rs"
+
+[dependencies]
+edr-common = { path = "../edr-common" }
+
+# Async
+tokio            = { workspace = true }
+tokio-util       = { workspace = true }
+
+# eBPF
+aya              = { workspace = true }
+aya-log          = { workspace = true }
+
+# Syscalls
+nix              = { workspace = true }
+
+# Storage
+rusqlite         = { workspace = true }
+
+# Serialization
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+
+# Configuration
+toml             = { workspace = true }
+
+# CLI
+clap             = { workspace = true }
+
+# TUI
+ratatui          = { workspace = true }
+crossterm        = { workspace = true }
+
+# Hashing
+sha2             = { workspace = true }
+hex              = { workspace = true }
+
+# Regex
+regex            = { workspace = true }
+
+# Logging
+tracing          = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Utils
+anyhow           = { workspace = true }
+thiserror        = { workspace = true }
+chrono           = { workspace = true }
+libc             = { workspace = true }
+bytes            = { workspace = true }
+
+[build-dependencies]
+# Pour embarquer le bytecode eBPF compilé

@@ -1,0 +1,55 @@
+# ─────────────────────────────────────────────────────────
+#  EDR Linux — Configuration principale (edr.toml)
+#  Copier vers /etc/edr/edr.toml avec permissions 640 root:root
+# ─────────────────────────────────────────────────────────
+
+[agent]
+pid_file       = "/run/edr.pid"
+quarantine_dir = "/var/edr/quarantine"
+log_dir        = "/var/log/edr"
+
+[storage]
+# Chemin de la base SQLite (répertoire créé automatiquement)
+db_path            = "/var/lib/edr/events.db"
+# Rétention des événements (jours)
+retention_days     = 30
+# Buffer mémoire max si SQLite indisponible (EF-S01)
+memory_buffer_size = 10000
+
+[collector]
+# Chemins surveillés par fanotify (EF-F01)
+watched_paths = [
+    "/etc/",
+    "/root/.ssh/",
+    "/home/",
+    "/var/spool/cron/",
+    "/tmp/",
+    "/dev/shm/",
+]
+
+# Taille du ring buffer eBPF en octets (4 Mo par défaut)
+ring_buffer_size = 4194304
+
+# Activer la surveillance réseau eBPF + /proc/net/tcp
+network_monitoring = true
+
+# Fichier de réputation IP (CIDR, un par ligne) — optionnel (EF-N04)
+# ip_reputation_file = "/etc/edr/ip_reputation.txt"
+
+# Seuil de connexions pour détecter un scan réseau (EF-N05)
+network_scan_threshold = 50
+
+[response]
+# Mode actif : exécute réellement SIGKILL, quarantaine, iptables
+# Mettre à true uniquement après validation en dry_run
+active_mode = false
+
+# Journaliser toutes les actions de réponse (EF-R04)
+log_actions = true
+
+[export]
+# URL d'un webhook pour recevoir les alertes en JSON (optionnel)
+# webhook_url = "https://siem.example.com/ingest"
+
+# Fichier de log des alertes en JSON-lines (ECS)
+alert_log_file = "/var/log/edr/alerts.jsonl"

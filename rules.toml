@@ -1,0 +1,228 @@
+# ─────────────────────────────────────────────────────────────────────
+#  EDR Linux — Règles de détection (rules.toml)
+#  Rechargeable à chaud via : edr rules reload  (envoie SIGHUP)
+#
+#  Structure d'une règle :
+#    id              = identifiant unique (ex: "R-001")
+#    description     = description lisible
+#    severity        = "Low" | "Medium" | "High" | "Critical"
+#    event_type      = "Process" | "File" | "Network" | "Any"
+#    logic           = "and" | "or"  (par défaut : "and")
+#    action          = "Alert" | "Kill" | "Quarantine" | "BlockIp"
+#    mitre_technique = code ATT&CK (optionnel)
+#    score           = poids dans le scoring composite (défaut : 10)
+#
+#  Opérateurs de condition :
+#    starts_with | contains | equals | not_equals | regex | gt | lt
+# ─────────────────────────────────────────────────────────────────────
+
+
+# ── R-001 : Exécution depuis /tmp ou /dev/shm ─────────────────────────
+[[rules]]
+id              = "R-001"
+description     = "Exécution d'un binaire depuis /tmp ou /dev/shm"
+severity        = "High"
+event_type      = "Process"
+logic           = "or"
+action          = "Alert"
+mitre_technique = "T1059"
+score           = 25
+
+[[rules.conditions]]
+field    = "exe_path"
+operator = "regex"
+value    = "^(/tmp|/dev/shm)/"
+
+
+# ── R-002 : Shell interactif spawné par un service ────────────────────
+[[rules]]
+id              = "R-002"
+description     = "Shell interactif (bash/sh/zsh) spawné par un service non-interactif"
+severity        = "Critical"
+event_type      = "Process"
+logic           = "and"
+action          = "Alert"
+mitre_technique = "T1059.004"
+score           = 40
+
+[[rules.conditions]]
+field    = "exe_path"
+operator = "regex"
+value    = "/(bash|sh|zsh|dash|fish)$"
+
+[[rules.conditions]]
+field    = "uid"
+operator = "gt"
+value    = "0"
+
+
+# ── R-003 : Modification de /etc/passwd ou /etc/shadow ───────────────
+[[rules]]
+id              = "R-003"
+description     = "Modification de /etc/passwd ou /etc/shadow"
+severity        = "Critical"
+event_type      = "File"
+logic           = "and"
+action          = "Alert"
+mitre_technique = "T1098"
+score           = 50
+
+[[rules.conditions]]
+field    = "path"
+operator = "regex"
+value    = "^/etc/(passwd|shadow)$"
+
+[[rules.conditions]]
+field    = "operation"
+operator = "regex"
+value    = "Write|Create"
+
+
+# ── R-004 : Modification d'une crontab ou timer systemd ──────────────
+[[rules]]
+id              = "R-004"
+description     = "Création ou modification d'une crontab ou timer systemd"
+severity        = "High"
+event_type      = "File"
+logic           = "or"
+action          = "Alert"
+mitre_technique = "T1053.003"
+score           = 30
+
+[[rules.conditions]]
+field    = "path"
+operator = "regex"
+value    = "(/var/spool/cron|/etc/cron\\.|/etc/systemd/.*\\.timer$)"
+
+
+# ── R-005 : Variable LD_PRELOAD définie ──────────────────────────────
+[[rules]]
+id              = "R-005"
+description     = "Variable d'environnement LD_PRELOAD définie au lancement d'un processus"
+severity        = "High"
+event_type      = "Process"
+logic           = "or"
+action          = "Alert"
+mitre_technique = "T1574.006"
+score           = 35
+
+[[rules.conditions]]
+field    = "args"
+operator = "contains"
+value    = "LD_PRELOAD"
+
+
+# ── R-006 : Scan réseau (> 50 connexions en 10s) ─────────────────────
+[[rules]]
+id              = "R-006"
+description     = "Processus effectuant > 50 connexions réseau en 10 secondes (scan potentiel)"
+severity        = "Medium"
+event_type      = "Network"
+logic           = "or"
+action          = "Alert"
+mitre_technique = "T1046"
+score           = 15
+
+[[rules.conditions]]
+field    = "dst_port"
+operator = "gt"
+value    = "0"
+
+
+# ── R-007 : Connexion réseau immédiatement après execve (<2s) ─────────
+[[rules]]
+id              = "R-007"
+description     = "Connexion réseau établie immédiatement après execve (< 2s)"
+severity        = "High"
+event_type      = "Network"
+logic           = "or"
+action          = "Alert"
+mitre_technique = "T1071"
+score           = 30
+
+[[rules.conditions]]
+field    = "dst_port"
+operator = "gt"
+value    = "0"
+
+
+# ── R-008 : Chmod +x suivi d'une exécution (<5s) ─────────────────────
+[[rules]]
+id              = "R-008"
+description     = "Chmod +x sur un fichier suivi de son exécution (< 5s)"
+severity        = "High"
+event_type      = "File"
+logic           = "or"
+action          = "Alert"
+mitre_technique = "T1222"
+score           = 30
+
+[[rules.conditions]]
+field    = "operation"
+operator = "equals"
+value    = "Chmod"
+
+
+# ── R-009 : Lecture de /etc/shadow par processus non autorisé ─────────
+[[rules]]
+id              = "R-009"
+description     = "Lecture de /etc/shadow par un processus autre que passwd/shadow"
+severity        = "Critical"
+event_type      = "File"
+logic           = "and"
+action          = "Alert"
+mitre_technique = "T1003.008"
+score           = 50
+
+[[rules.conditions]]
+field    = "path"
+operator = "equals"
+value    = "/etc/shadow"
+
+[[rules.conditions]]
+field    = "operation"
+operator = "regex"
+value    = "Open|Read"
+
+
+# ── R-010 : Création de .so dans un répertoire world-writable ─────────
+[[rules]]
+id              = "R-010"
+description     = "Création d'un fichier .so dans un répertoire world-writable"
+severity        = "High"
+event_type      = "File"
+logic           = "and"
+action          = "Alert"
+mitre_technique = "T1574.001"
+score           = 40
+
+[[rules.conditions]]
+field    = "path"
+operator = "regex"
+value    = "^/(tmp|dev/shm|var/tmp)/.*\\.so(\\.[0-9]+)*$"
+
+[[rules.conditions]]
+field    = "operation"
+operator = "equals"
+value    = "Create"
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Règles personnalisées — ajoutez les vôtres ci-dessous
+# ─────────────────────────────────────────────────────────────────────
+
+# Exemple : alerte sur connexion vers port 4444 (Metasploit par défaut)
+# [[rules]]
+# id              = "R-CUSTOM-001"
+# description     = "Connexion sortante vers le port Metasploit 4444"
+# severity        = "Critical"
+# event_type      = "Network"
+# logic           = "or"
+# action          = "BlockIp"
+# mitre_technique = "T1571"
+# score           = 60
+#
+# [[rules.conditions]]
+# field    = "dst_port"
+# operator = "equals"
+# value    = "4444"

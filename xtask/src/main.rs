@@ -80,7 +80,6 @@ fn ensure_success(status: ExitStatus, msg: &str) -> Result<()> {
 fn workspace_root() -> PathBuf {
     // __file__ est dans xtask/src/, on remonte de 3 niveaux
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()  // xtask/
         .parent().unwrap()  // workspace root
         .to_path_buf()
 }

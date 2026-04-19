@@ -1,0 +1,5 @@
+[target.bpfel-unknown-none]
+linker = "bpf-linker"
+
+[alias]
+xtask = "run --package xtask --"

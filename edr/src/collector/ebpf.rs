@@ -1,8 +1,10 @@
 //! Collecteur eBPF : charge le bytecode et lit les événements execve.
+//!
+//! Le bytecode est lu depuis le chemin de build fixe.
+//! Il doit être compilé en premier par `cargo xtask build`.
 
 use anyhow::{Context, Result};
 use aya::{
-    include_bytes_aligned,
     maps::perf::AsyncPerfEventArray,
     programs::TracePoint,
     util::online_cpus,
@@ -16,8 +18,10 @@ use tracing::{info, warn};
 
 use crate::events::{Event, ProcessEvent};
 
-/// Structure miroir de ExecEvent dans edr-ebpf/src/main.rs.
-/// Doit être identique (même layout C).
+/// Chemin du bytecode eBPF compilé.
+/// Doit correspondre à : cargo build -p edr-ebpf --target bpfel-unknown-none --release
+const EBPF_BYTECODE: &str = "target/bpfel-unknown-none/release/edr-ebpf";
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct ExecEvent {
@@ -29,19 +33,21 @@ struct ExecEvent {
 unsafe impl Send for ExecEvent {}
 
 pub async fn run(tx: Sender<Event>) -> Result<()> {
-    // Bytecode eBPF compilé embarqué à la compilation par le build script
-    let mut ebpf = Ebpf::load(include_bytes_aligned!(
-        concat!(env!("OUT_DIR"), "/edr-ebpf")
-    ))
-    .context("Impossible de charger le bytecode eBPF. \
-              Avez-vous lancé 'cargo xtask build' ?")?;
+    // Lecture du bytecode depuis le chemin de build
+    let bytecode = std::fs::read(EBPF_BYTECODE)
+        .with_context(|| format!(
+            "Bytecode eBPF introuvable : {}\nLancer 'cargo xtask build' d'abord.",
+            EBPF_BYTECODE
+        ))?;
 
-    // Logger eBPF → tracing (optionnel)
+    let mut ebpf = Ebpf::load(&bytecode)
+        .context("Impossible de charger le bytecode eBPF")?;
+
     if let Err(e) = EbpfLogger::init(&mut ebpf) {
         warn!("EbpfLogger indisponible : {}", e);
     }
 
-    // Attachement du tracepoint syscalls/sys_enter_execve
+    // Attachement tracepoint
     let prog: &mut TracePoint = ebpf
         .program_mut("edr_execve")
         .context("Programme eBPF 'edr_execve' introuvable")?
@@ -51,7 +57,7 @@ pub async fn run(tx: Sender<Event>) -> Result<()> {
         .context("Attachement tracepoint sys_enter_execve")?;
     info!("tracepoint/syscalls/sys_enter_execve attaché");
 
-    // Lecture du PerfEventArray
+    // Lecture PerfEventArray
     let mut perf_array = AsyncPerfEventArray::try_from(
         ebpf.take_map("EXEC_EVENTS")
             .context("Map EXEC_EVENTS introuvable")?,
@@ -67,40 +73,26 @@ pub async fn run(tx: Sender<Event>) -> Result<()> {
             let mut buffers = vec![BytesMut::with_capacity(512); 10];
             loop {
                 let events = match buf.read_events(&mut buffers).await {
-                    Ok(e) => e,
-                    Err(e) => {
-                        warn!("Erreur lecture perf CPU {}: {}", cpu, e);
-                        break;
-                    }
+                    Ok(e)  => e,
+                    Err(e) => { warn!("Erreur perf CPU {}: {}", cpu, e); break; }
                 };
-
                 for buf in buffers.iter().take(events.read) {
-                    if buf.len() < std::mem::size_of::<ExecEvent>() {
-                        continue;
-                    }
+                    if buf.len() < std::mem::size_of::<ExecEvent>() { continue; }
                     let raw: ExecEvent = unsafe {
                         std::ptr::read_unaligned(buf.as_ptr() as *const ExecEvent)
                     };
-
                     let end = raw.filename.iter().position(|&b| b == 0).unwrap_or(256);
                     let exe = String::from_utf8_lossy(&raw.filename[..end]).to_string();
-
-                    let ev = Event::Process(ProcessEvent {
-                        pid:       raw.pid,
-                        uid:       raw.uid,
-                        exe,
+                    let ev  = Event::Process(ProcessEvent {
+                        pid: raw.pid, uid: raw.uid, exe,
                         timestamp: Utc::now(),
                     });
-
-                    if tx.send(ev).await.is_err() {
-                        return;
-                    }
+                    if tx.send(ev).await.is_err() { return; }
                 }
             }
         });
     }
 
-    // Cette tâche tourne indéfiniment (les spawns ci-dessus lisent en boucle)
     std::future::pending::<()>().await;
     Ok(())
 }

@@ -1,11 +1,3 @@
-//! EDR Linux — Agent userspace principal.
-//!
-//! Compile et lance avec :
-//!   cargo xtask run
-//!
-//! Ou manuellement :
-//!   cargo xtask build && sudo ./target/release/edr
-
 mod events;
 mod collector;
 mod detector;
@@ -23,69 +15,73 @@ use storage::Database;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Logs : RUST_LOG=debug pour plus de détails
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env()
-            .add_directive("edr=info".parse()?))
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("edr=info".parse()?)
+        )
         .with_target(false)
         .init();
 
     info!("EDR Linux v0.1 — démarrage");
 
-    // Base de données SQLite locale
     let db = Arc::new(Database::open("edr.db")?);
     db.migrate()?;
 
-    // Canal principal : tous les collecteurs → détecteur
     let (tx, rx) = mpsc::channel::<Event>(4096);
 
-    // Lancement des collecteurs en parallèle
-    let tx_ebpf    = tx.clone();
-    let tx_files   = tx.clone();
-    let tx_network = tx.clone();
+    // ── Collecteurs ──────────────────────────────────────────────────
 
-    tokio::spawn(async move {
-        if let Err(e) = collector::ebpf::run(tx_ebpf).await {
-            tracing::error!("Collecteur eBPF arrêté : {:#}", e);
-        }
-    });
-
-    tokio::spawn(async move {
-        if let Err(e) = collector::files::run(tx_files).await {
-            tracing::error!("Collecteur fichiers arrêté : {:#}", e);
-        }
-    });
-
-    tokio::spawn(async move {
-        if let Err(e) = collector::network::run(tx_network).await {
-            tracing::error!("Collecteur réseau arrêté : {:#}", e);
-        }
-    });
-
-    // Lancement du détecteur + stockage + TUI
-    let db_det = db.clone();
-    let db_tui = db.clone();
-
-    let detector_handle = tokio::spawn(async move {
-        detector::run(rx, db_det).await
-    });
-
-    let tui_handle = tokio::spawn(async move {
-        tui::run(db_tui).await
-    });
-
-    // Attente Ctrl-C
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Signal reçu, arrêt…");
-        }
-        r = detector_handle => {
-            if let Ok(Err(e)) = r { tracing::error!("Détecteur : {:#}", e); }
-        }
-        r = tui_handle => {
-            if let Ok(Err(e)) = r { tracing::error!("TUI : {:#}", e); }
-        }
+    {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            match collector::ebpf::run(tx).await {
+                Ok(_)  => tracing::warn!("Collecteur eBPF terminé"),
+                Err(e) => tracing::error!("Collecteur eBPF ERREUR : {:#}", e),
+            }
+        });
     }
+    {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            match collector::files::run(tx).await {
+                Ok(_)  => tracing::warn!("Collecteur fichiers terminé"),
+                Err(e) => tracing::error!("Collecteur fichiers ERREUR : {:#}", e),
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            match collector::network::run(tx).await {
+                Ok(_)  => tracing::warn!("Collecteur réseau terminé"),
+                Err(e) => tracing::error!("Collecteur réseau ERREUR : {:#}", e),
+            }
+        });
+    }
+    drop(tx);
+
+    // ── Détecteur (tourne toujours en arrière-plan) ──────────────────
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = detector::run(rx, db).await {
+                tracing::error!("Détecteur ERREUR : {:#}", e);
+            }
+        });
+    }
+
+    // ── TUI (bloquant — quand l'utilisateur ferme, on attend Ctrl-C) ─
+    info!("Démarrage du dashboard TUI (q pour fermer le dashboard)");
+    if let Err(e) = tui::run(db.clone()).await {
+        tracing::error!("TUI ERREUR : {:#}", e);
+    }
+
+    // Après fermeture du TUI, les collecteurs continuent.
+    // On attend Ctrl-C pour arrêter complètement.
+    info!("Dashboard fermé. Surveillance active. Ctrl-C pour arrêter.");
+    tokio::signal::ctrl_c().await?;
+    info!("Arrêt.");
 
     Ok(())
 }

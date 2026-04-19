@@ -7,7 +7,6 @@ Endpoint Detection & Response léger pour Linux, écrit en Rust.
 ```bash
 # 1. Rust nightly + composants eBPF
 rustup toolchain install nightly
-rustup target add bpfel-unknown-none --toolchain nightly
 rustup component add rust-src --toolchain nightly
 
 # 2. Installer bpf-linker (nécessaire pour compiler le code noyau)

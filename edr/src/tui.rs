@@ -1,10 +1,5 @@
-//! Dashboard TUI temps-réel avec ratatui.
-//!
-//! Affiche :
-//! - Compteurs globaux (événements, alertes)
-//! - Liste des 15 dernières alertes avec sévérité colorée
-//!
-//! Quitter : q ou Ctrl-C
+//! Dashboard TUI temps-réel.
+//! q ou Esc : ferme le dashboard (la surveillance continue en arrière-plan)
 
 use anyhow::Result;
 use crossterm::{
@@ -29,14 +24,15 @@ pub async fn run(db: Arc<Database>) -> Result<()> {
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
 
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let backend  = CrosstermBackend::new(stdout);
+    let mut term = Terminal::new(backend)?;
 
-    let result = event_loop(&mut terminal, &db).await;
+    let result = event_loop(&mut term, &db).await;
 
+    // Restaurer le terminal proprement
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    execute!(term.backend_mut(), LeaveAlternateScreen)?;
+    term.show_cursor()?;
 
     result
 }
@@ -46,14 +42,14 @@ async fn event_loop<B: ratatui::backend::Backend>(
     db: &Database,
 ) -> Result<()> {
     loop {
-        // Lecture des données
+        // Lecture fraîche à chaque frame
         let (total_events, total_alerts) = db.stats().unwrap_or((0, 0));
-        let alerts = db.recent_alerts(15).unwrap_or_default();
+        let alerts = db.recent_alerts(30).unwrap_or_default();
 
         terminal.draw(|f| render(f, total_events, total_alerts, &alerts))?;
 
-        // Gestion clavier avec timeout 1s
-        if event::poll(Duration::from_secs(1))? {
+        // Rafraîchissement toutes les 300ms
+        if event::poll(Duration::from_millis(300))? {
             if let Event::Key(k) = event::read()? {
                 if matches!(k.code, KeyCode::Char('q') | KeyCode::Esc) {
                     break;
@@ -68,45 +64,76 @@ fn render(
     f: &mut Frame,
     total_events: i64,
     total_alerts: i64,
-    alerts: &[(String, String, String)],
+    alerts: &[(String, String, String, String)],
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
         .split(f.size());
 
     // ── En-tête ──────────────────────────────────────────────────────
     let header = Paragraph::new(format!(
-        "  EDR Linux  │  Événements : {}  │  Alertes : {}",
+        "  EDR Linux  │  Événements : {}  │  Alertes : {}  │  rafraîchissement : 300ms",
         total_events, total_alerts
     ))
-    .style(Style::default().fg(Color::White).bg(Color::DarkGray).add_modifier(Modifier::BOLD))
-    .block(Block::default().borders(Borders::NONE));
+    .style(Style::default()
+        .fg(Color::White)
+        .bg(Color::DarkGray)
+        .add_modifier(Modifier::BOLD));
     f.render_widget(header, chunks[0]);
 
-    // ── Liste des alertes ─────────────────────────────────────────────
-    let items: Vec<ListItem> = alerts.iter().map(|(rule, sev, msg)| {
-        let color = match sev.as_str() {
-            "CRITICAL" => Color::Red,
-            "HIGH"     => Color::Yellow,
-            "MEDIUM"   => Color::Blue,
-            _          => Color::Gray,
-        };
-        let line = Line::from(vec![
-            Span::styled(format!(" {:8} ", sev), Style::default().fg(color).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:<8} ", rule), Style::default().fg(Color::Cyan)),
-            Span::raw(msg.as_str()),
-        ]);
-        ListItem::new(line)
-    }).collect();
+    // ── Alertes ───────────────────────────────────────────────────────
+    let items: Vec<ListItem> = if alerts.is_empty() {
+        vec![ListItem::new(Line::from(vec![
+            Span::styled(
+                "  Aucune alerte pour l'instant…",
+                Style::default().fg(Color::DarkGray),
+            )
+        ]))]
+    } else {
+        alerts.iter().map(|(rule, sev, msg, ts)| {
+            let color = match sev.as_str() {
+                "CRITICAL" => Color::Red,
+                "HIGH"     => Color::Yellow,
+                "MEDIUM"   => Color::Blue,
+                _          => Color::Gray,
+            };
+            let line = Line::from(vec![
+                Span::styled(
+                    format!(" {:8} ", sev),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:<8} ", rule),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(
+                    format!("[{}] ", ts),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw(msg.as_str()),
+            ]);
+            ListItem::new(line)
+        }).collect()
+    };
 
-    let list = List::new(items)
-        .block(Block::default().title(" Dernières alertes ").borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow)));
+    let title = format!(" Alertes ({}) — les plus récentes en haut ", total_alerts);
+    let list = List::new(items).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow)),
+    );
     f.render_widget(list, chunks[1]);
 
     // ── Pied de page ─────────────────────────────────────────────────
-    let footer = Paragraph::new("  q : quitter")
-        .style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(
+        "  q / Esc : fermer le dashboard  (la surveillance continue en arrière-plan)"
+    )
+    .style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, chunks[2]);
 }

@@ -27,7 +27,7 @@ impl Database {
                 kind       TEXT NOT NULL,
                 summary    TEXT NOT NULL,
                 data_json  TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
             );
 
             CREATE TABLE IF NOT EXISTS alerts (
@@ -36,7 +36,7 @@ impl Database {
                 severity   TEXT NOT NULL,
                 message    TEXT NOT NULL,
                 data_json  TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
             );
         ")?;
         Ok(())
@@ -64,21 +64,27 @@ impl Database {
         Ok(())
     }
 
-    pub fn recent_alerts(&self, limit: usize) -> Result<Vec<(String, String, String)>> {
+    /// Retourne les dernières alertes : (rule, severity, message, timestamp)
+    pub fn recent_alerts(&self, limit: usize) -> Result<Vec<(String, String, String, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT rule, severity, message FROM alerts ORDER BY id DESC LIMIT ?1"
+            "SELECT rule, severity, message, created_at \
+             FROM alerts ORDER BY id DESC LIMIT ?1"
         )?;
         let rows = stmt.query_map(params![limit], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })?;
         rows.map(|r| r.map_err(|e| anyhow::anyhow!(e))).collect()
     }
 
     pub fn stats(&self) -> Result<(i64, i64)> {
         let conn = self.conn.lock().unwrap();
-        let events: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
-        let alerts: i64 = conn.query_row("SELECT COUNT(*) FROM alerts", [], |r| r.get(0))?;
+        let events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events", [], |r| r.get(0)
+        )?;
+        let alerts: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM alerts", [], |r| r.get(0)
+        )?;
         Ok((events, alerts))
     }
 }
